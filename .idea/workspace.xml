@@ -6469,6 +6469,11 @@
   </component>
   <component name="GOROOT" path="/usr/local/Cellar/go/1.15.2/libexec" />
   <component name="Git.Settings">
+    <option name="RECENT_BRANCH_BY_REPOSITORY">
+      <map>
+        <entry key="$PROJECT_DIR$/.." value="dev" />
+      </map>
+    </option>
     <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$/.." />
   </component>
   <component name="ProjectId" id="1kuIKfGh6SYDkY1Ki1Nx02zXXx7" />

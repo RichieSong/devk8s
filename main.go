@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
@@ -13,8 +14,6 @@ import (
 
 	v1 "k8s.io/api/apps/v1"
 	v2 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/labels"
-	"k8s.io/client-go/informers"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/clientcmd"
@@ -140,38 +139,73 @@ func main() {
 		panic(err.Error())
 	}
 
-	// 初始化 informer factory（为了测试方便这里设置每30s重新 List 一次）
-	informerFactory := informers.NewSharedInformerFactory(clientset, time.Second*30)
-	// 对 Deployment 监听
-	deployInformer := informerFactory.Apps().V1().Deployments()
-	// 创建 Informer（相当于注册到工厂中去，这样下面启动的时候就会去 List & Watch 对应的资源）
-	informer := deployInformer.Informer()
-	// 创建 Lister
-	deployLister := deployInformer.Lister()
-	// 注册事件处理程序
-	informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc:    onAdd,
-		UpdateFunc: onUpdate,
-		DeleteFunc: onDelete,
-	})
+	// 创建pod的list watch
+	podListWatcher := cache.NewListWatchFromClient(clientset.CoreV1().RESTClient(), "pods", v2.NamespaceDefault, fields.Everything())
 
-	stopper := make(chan struct{})
-	defer close(stopper)
+	// 创建队列
+	queue := workqueue.NewRateLimitingQueue(workqueue.DefaultControllerRateLimiter())
+	indexer, informer := cache.NewIndexerInformer(podListWatcher, &v2.Pod{}, 0, cache.ResourceEventHandlerFuncs{
+		AddFunc: func(obj interface{}) {
+			key, err := cache.MetaNamespaceKeyFunc(obj)
+			if err == nil {
+				queue.Add(key) // 入队workqueue
+			}
 
-	// 启动 informer，List & Watch
-	informerFactory.Start(stopper)
-	// 等待所有启动的 Informer 的缓存被同步
-	informerFactory.WaitForCacheSync(stopper)
+		},
+		UpdateFunc: func(oldObj, newObj interface{}) {
+			key, err := cache.MetaNamespaceKeyFunc(newObj)
+			if err == nil {
+				queue.Add(key) // 入队workqueue
+			}
+		},
+		DeleteFunc: func(obj interface{}) {
+			key, err := cache.DeletionHandlingMetaNamespaceKeyFunc(obj)
+			if err == nil {
+				queue.Add(key) // 入队workqueue
+			}
+		},
+	}, cache.Indexers{})
+	// 实例化pod控制器
+	controller := NewController(queue, indexer, informer)
 
-	// 从本地缓存中获取 default 中的所有 deployment 列表
-	deployments, err := deployLister.Deployments("default").List(labels.Everything())
-	if err != nil {
-		panic(err)
-	}
-	for idx, deploy := range deployments {
-		fmt.Printf("%d -> %s\n", idx+1, deploy.Name)
-	}
-	<-stopper
+	stopCh := make(chan struct{})
+	defer close(stopCh)
+	go controller.Run(1, stopCh)
+
+	select {}
+
+	//// 初始化 informer factory（为了测试方便这里设置每30s重新 List 一次）
+	//informerFactory := informers.NewSharedInformerFactory(clientset, time.Second*30)
+	//// 对 Deployment 监听
+	//deployInformer := informerFactory.Apps().V1().Deployments()
+	//// 创建 Informer（相当于注册到工厂中去，这样下面启动的时候就会去 List & Watch 对应的资源）
+	//informer := deployInformer.Informer()
+	//// 创建 Lister
+	//deployLister := deployInformer.Lister()
+	//// 注册事件处理程序
+	//informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+	//	AddFunc:    onAdd,
+	//	UpdateFunc: onUpdate,
+	//	DeleteFunc: onDelete,
+	//})
+	//
+	//stopper := make(chan struct{})
+	//defer close(stopper)
+	//
+	//// 启动 informer，List & Watch
+	//informerFactory.Start(stopper)
+	//// 等待所有启动的 Informer 的缓存被同步
+	//informerFactory.WaitForCacheSync(stopper)
+	//
+	//// 从本地缓存中获取 default 中的所有 deployment 列表
+	//deployments, err := deployLister.Deployments("default").List(labels.Everything())
+	//if err != nil {
+	//	panic(err)
+	//}
+	//for idx, deploy := range deployments {
+	//	fmt.Printf("%d -> %s\n", idx+1, deploy.Name)
+	//}
+	//<-stopper
 }
 
 func onAdd(obj interface{}) {
