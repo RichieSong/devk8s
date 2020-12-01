@@ -64,7 +64,6 @@ func (c *Controller) Run(threadiness int, stopCh chan struct{}) {
 // 处理元素
 func (c *Controller) runWorker() {
 	for c.processNextItem() {
-
 	}
 }
 func (c *Controller) processNextItem() bool {
